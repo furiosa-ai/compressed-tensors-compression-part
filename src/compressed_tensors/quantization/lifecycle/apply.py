@@ -145,7 +145,7 @@ def apply_quantization_config(
             target_to_scheme[target] = scheme
 
     if run_compressed:
-        from compressed_tensors.linear.compressed_linear import CompressedLinear
+        from compressed_tensors.linear.compressed_linear import CompressedLinear, CompressedMoeExperts
 
     # list of submodules to ignore
     ignored_submodules = defaultdict(list)
@@ -167,6 +167,7 @@ def apply_quantization_config(
             if run_compressed:
                 format = config.format
                 if format != CompressionFormat.dense.value:
+                    from transformers.models.exaone_moe.modeling_exaone_moe import ExaoneMoeExperts
                     if isinstance(submodule, torch.nn.Linear):
                         # TODO: expand to more module types
                         compressed_linear = CompressedLinear.from_linear(
@@ -175,6 +176,19 @@ def apply_quantization_config(
                             quantization_format=format,
                         )
                         replace_module(model, name, compressed_linear)
+                    elif isinstance(submodule, ExaoneMoeExperts):
+                        compressed_moe = CompressedMoeExperts.from_moe(
+                            submodule,
+                            quantization_scheme=scheme,
+                            quantization_format=format,
+                        )
+                        replace_module(model, name, compressed_moe)
+                    else:
+                        _LOGGER.info(
+                            f"Module {name} of type {type(submodule)} cannot be "
+                            "converted to compressed format. Only torch.nn.Linear "
+                            "is currently supported."
+                        )
 
             # target matched - add layer and scheme to target list
             submodule.quantization_scheme = scheme

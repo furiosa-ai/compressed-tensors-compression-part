@@ -162,12 +162,14 @@ class BaseCompressor(RegistryMixin, ABC):
         """
         raise NotImplementedError()
 
-    def decompress_module(self, module: Module):
+    def decompress_module(self, module: Module, prefix: str = ""):
         """
         Decompresses a single compressed leaf PyTorch module. If the module is not
         quantized, this function has no effect.
 
         :param module: PyTorch module to decompress
+        :param prefix: optional prefix to filter parameters (e.g., "gate_proj." to only
+            decompress parameters starting with that prefix)
         :return: tensor of the decompressed weight, or None if module is not quantized
         """
 
@@ -183,7 +185,13 @@ class BaseCompressor(RegistryMixin, ABC):
         quantization_args = quantization_scheme.weights
         compressed_data = {}
         for name, parameter in module.named_parameters():
-            compressed_data[name] = parameter
+            # If prefix is specified, only include parameters that start with prefix
+            if prefix:
+                if name.startswith(prefix):
+                    # Remove prefix from the parameter name for decompression
+                    compressed_data[name[len(prefix):]] = parameter
+            else:
+                compressed_data[name] = parameter
 
         return self.decompress_weight(
             compressed_data=compressed_data, quantization_args=quantization_args
