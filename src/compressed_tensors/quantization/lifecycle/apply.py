@@ -107,7 +107,8 @@ def apply_quantization_config(
     :param run_compressed: Whether the model will be run in compressed mode or
         decompressed fully on load
     """
-    from compressed_tensors.linear.compressed_linear import CompressedLinear
+    from compressed_tensors.linear.compressed_linear import CompressedLinear, CompressedMoeExperts
+    from transformers.models.exaone_moe.modeling_exaone_moe import ExaoneMoeExperts
 
     config = deepcopy(config)
     if config is None:  # see PR #180
@@ -154,7 +155,13 @@ def apply_quantization_config(
                 quantization_format=config.format,
             )
             replace_module(model, name, compressed_linear)
-
+        elif isinstance(submodule, ExaoneMoeExperts):
+            compressed_moe = CompressedMoeExperts.from_moe(
+                submodule,
+                quantization_scheme=scheme,
+                quantization_format=format,
+            )
+            replace_module(model, name, compressed_moe)
         else:
             if is_attention_module(submodule) and is_narrow_match(
                 model, scheme.targets, name
