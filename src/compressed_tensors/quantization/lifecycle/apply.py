@@ -184,11 +184,7 @@ def apply_quantization_config(
                         )
                         replace_module(model, name, compressed_moe)
                     else:
-                        _LOGGER.info(
-                            f"Module {name} of type {type(submodule)} cannot be "
-                            "converted to compressed format. Only torch.nn.Linear "
-                            "is currently supported."
-                        )
+                        pass
 
             # target matched - add layer and scheme to target list
             submodule.quantization_scheme = scheme

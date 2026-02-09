@@ -147,23 +147,9 @@ class CompressedMoeExperts(nn.Module):
 
         # Split gate_up_proj into gate_proj and up_proj
         # gate_up_proj shape: (num_experts, 2 * intermediate_dim, hidden_dim)
-        gate_proj, up_proj = module.gate_up_proj.chunk(2, dim=1)
+        gate_proj_weight, up_proj_weight = module.gate_up_proj.chunk(2, dim=1)
+        down_proj_weight = module.down_proj
         # gate_proj, up_proj shape: (num_experts, intermediate_dim, hidden_dim)
-
-        # Initialize quantization for gate_proj
-        gate_proj_compression_params: Dict[str, Tuple] = module.compressor.compression_param_info(
-            gate_proj.shape, quantization_scheme.weights
-        )
-
-        # Initialize quantization for up_proj
-        up_proj_compression_params: Dict[str, Tuple] = module.compressor.compression_param_info(
-            up_proj.shape, quantization_scheme.weights
-        )
-
-        # Initialize quantization for down_proj
-        down_proj_compression_params: Dict[str, Tuple] = module.compressor.compression_param_info(
-            module.down_proj.shape, quantization_scheme.weights
-        )
 
         # Remove original parameters
         delattr(module, "gate_up_proj")
@@ -179,26 +165,34 @@ class CompressedMoeExperts(nn.Module):
         module.add_module("up_proj", up_proj_module)
         module.add_module("down_proj", down_proj_module)
 
-        # Populate compressed weights for gate_proj
-        for name, (shape, dtype) in gate_proj_compression_params.items():
-            param = Parameter(
-                torch.empty(shape, device=init_device, dtype=dtype), requires_grad=False
-            )
-            register_offload_parameter(gate_proj_module, name, param)
+        # Initialize quantization and compressed params for each submodule
+        for submodule, weight in [
+            (gate_proj_module, gate_proj_weight),
+            (up_proj_module, up_proj_weight),
+            (down_proj_module, down_proj_weight),
+        ]:
+            # Set temporary weight for initialize_module_for_quantization
+            submodule.weight = Parameter(weight, requires_grad=False)
 
-        # Populate compressed weights for up_proj
-        for name, (shape, dtype) in up_proj_compression_params.items():
-            param = Parameter(
-                torch.empty(shape, device=init_device, dtype=dtype), requires_grad=False
+            # Initialize scales and zero points
+            initialize_module_for_quantization(
+                submodule, quantization_scheme, force_zero_point=False
             )
-            register_offload_parameter(up_proj_module, name, param)
 
-        # Populate compressed weights for down_proj
-        for name, (shape, dtype) in down_proj_compression_params.items():
-            param = Parameter(
-                torch.empty(shape, device=init_device, dtype=dtype), requires_grad=False
+            # Get compression param info
+            compression_params: Dict[str, Tuple] = module.compressor.compression_param_info(
+                weight.shape, quantization_scheme.weights
             )
-            register_offload_parameter(down_proj_module, name, param)
+
+            # Remove weight (will be replaced with compressed parameter)
+            delattr(submodule, "weight")
+
+            # Populate compressed weights
+            for name, (shape, dtype) in compression_params.items():
+                param = Parameter(
+                    torch.empty(shape, device=init_device, dtype=dtype), requires_grad=False
+                )
+                register_offload_parameter(submodule, name, param)
 
         # Mark module as compressed
         module.quantization_status = QuantizationStatus.COMPRESSED

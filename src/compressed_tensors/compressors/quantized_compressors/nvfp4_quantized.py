@@ -116,12 +116,31 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         weight = compressed_data["weight_packed"]
         scale = compressed_data["weight_scale"]
         global_scale = compressed_data["weight_global_scale"]
-        m, n = weight.shape
-        # TODO: use a user provided dequant dtype
-        unpacked = unpack_fp4_from_uint8(weight, m, n * 2)
-        decompressed_weight = dequantize(
-            x_q=unpacked, scale=scale, global_scale=global_scale, dtype=unpacked.dtype
-        )
+
+        if weight.ndim == 3:
+            # 3D weight: iterate over first axis and dequantize per-expert
+            decompressed_slices = []
+            for i in range(weight.shape[0]):
+                m, n = weight[i].shape
+                unpacked = unpack_fp4_from_uint8(weight[i], m, n * 2)
+                decompressed = dequantize(
+                    x_q=unpacked,
+                    scale=scale[i],
+                    global_scale=global_scale[i],
+                    dtype=unpacked.dtype,
+                )
+                decompressed_slices.append(decompressed)
+            decompressed_weight = torch.stack(decompressed_slices, dim=0)
+        else:
+            m, n = weight.shape
+            # TODO: use a user provided dequant dtype
+            unpacked = unpack_fp4_from_uint8(weight, m, n * 2)
+            decompressed_weight = dequantize(
+                x_q=unpacked,
+                scale=scale,
+                global_scale=global_scale,
+                dtype=unpacked.dtype,
+            )
 
         return decompressed_weight
 
