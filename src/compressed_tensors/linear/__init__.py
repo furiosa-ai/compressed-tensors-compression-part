@@ -11,3 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from .partialsum_linear import (  # noqa: F401
+    PartialSumCompressedLinear,
+    QuantPreset,
+    get_quant_args,
+    replace_with_partialsum_linear,
+    get_partialsum_layers,
+    get_total_quant_error,
+    reset_all_errors,
+)
