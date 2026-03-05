@@ -49,6 +49,7 @@ __all__ = [
     "calculate_qparams",
     "generate_gparam",
     "is_fp4",
+    "is_nvfp4plus",
 ]
 
 # target the self_attn layer
@@ -62,6 +63,15 @@ def is_fp4(quantization_args: QuantizationArgs):
     return (
         quantization_args.num_bits == 4
         and quantization_args.type == QuantizationType.FLOAT
+    )
+
+
+def is_nvfp4plus(quantization_args: QuantizationArgs) -> bool:
+    """True for NVFP4+ (FP4 with GROUP strategy, BF16 scales, group_size=16)."""
+    return (
+        is_fp4(quantization_args)
+        and quantization_args.strategy == QuantizationStrategy.GROUP
+        and quantization_args.group_size == 16
     )
 
 
@@ -94,14 +104,17 @@ def calculate_qparams(
     bit_range = bit_max - bit_min
 
     if is_fp4(quantization_args=quantization_args):
-        zp_dtype = FP8_E4M3_DATA.dtype
+        if is_nvfp4plus(quantization_args=quantization_args):
+            zp_dtype = torch.bfloat16
+        else:
+            zp_dtype = FP8_E4M3_DATA.dtype
     else:
         zp_dtype = quantization_args.pytorch_dtype()
 
     if quantization_args.symmetric:
         max_val_pos = torch.max(torch.abs(min_vals), torch.abs(max_vals))
 
-        if is_fp4(quantization_args=quantization_args) and global_scale is not None:
+        if is_fp4(quantization_args=quantization_args) and global_scale is not None and not is_nvfp4plus(quantization_args=quantization_args):
             # Conditionally scale the generated local scale by a global_scale
             scales = global_scale * (max_val_pos / FP4_E2M1_DATA.max)
             scales = torch.clamp(scales, max=FP8_E4M3_DATA.max, min=FP8_E4M3_DATA.min)
