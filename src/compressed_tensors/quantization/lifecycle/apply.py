@@ -147,6 +147,8 @@ def apply_quantization_config(
     if run_compressed:
         from compressed_tensors.linear.compressed_linear import CompressedLinear, CompressedMoeExperts
 
+    partial_sum_cfg = config.partial_sum
+
     # list of submodules to ignore
     ignored_submodules = defaultdict(list)
     # mark appropriate layers for quantization by setting their quantization schemes
@@ -169,13 +171,30 @@ def apply_quantization_config(
                 if format != CompressionFormat.dense.value:
                     from transformers.models.exaone_moe.modeling_exaone_moe import ExaoneMoeExperts
                     if isinstance(submodule, torch.nn.Linear):
-                        # TODO: expand to more module types
-                        compressed_linear = CompressedLinear.from_linear(
-                            submodule,
-                            quantization_scheme=scheme,
-                            quantization_format=format,
-                        )
-                        replace_module(model, name, compressed_linear)
+                        # check if this module should be PartialSumLinear
+                        if partial_sum_cfg is not None and _is_partial_sum_target(
+                            name, partial_sum_cfg
+                        ):
+                            from compressed_tensors.linear.partialsum_linear import (
+                                PartialSumLinear,
+                            )
+
+                            ps_linear = PartialSumLinear.from_linear(
+                                submodule,
+                                quantization_scheme=scheme,
+                                quantization_format=format,
+                                num_ranks=partial_sum_cfg.num_ranks,
+                                partial_sum_quant_args=partial_sum_cfg.quant_args,
+                                collect_errors=partial_sum_cfg.collect_errors,
+                            )
+                            replace_module(model, name, ps_linear)
+                        else:
+                            compressed_linear = CompressedLinear.from_linear(
+                                submodule,
+                                quantization_scheme=scheme,
+                                quantization_format=format,
+                            )
+                            replace_module(model, name, compressed_linear)
                     elif isinstance(submodule, ExaoneMoeExperts):
                         compressed_moe = CompressedMoeExperts.from_moe(
                             submodule,
@@ -481,3 +500,12 @@ def _merge_schemes(
         merged_scheme.update(targets=[name])
 
         return QuantizationScheme(**merged_scheme)
+
+
+def _is_partial_sum_target(name: str, partial_sum_cfg) -> bool:
+    """Check if a module name matches the partial_sum targets/ignore patterns."""
+    from compressed_tensors.linear.partialsum_linear import is_partial_sum_target
+
+    return is_partial_sum_target(
+        name, partial_sum_cfg.targets, partial_sum_cfg.ignore
+    )

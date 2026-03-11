@@ -383,6 +383,8 @@ def wrap_module_forward_quantized(module: Module, scheme: QuantizationScheme):
             )
 
         # perform wrapped forward call
+        # For PartialSumLinear, forward_func_orig is PartialSumLinear.forward
+        # which handles partial sum matmul + QDQ internally
         output = forward_func_orig.__get__(module, module.__class__)(
             input_, *args[1:], **kwargs
         )
