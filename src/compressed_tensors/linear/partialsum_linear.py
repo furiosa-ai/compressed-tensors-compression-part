@@ -23,6 +23,7 @@ from torch.nn.functional import linear
 from torch.nn.modules import Linear
 
 from compressed_tensors.compressors.base import BaseCompressor
+from compressed_tensors.quantization.utils import is_fp4
 from compressed_tensors.quantization import (
     QuantizationScheme,
     QuantizationStatus,
@@ -159,6 +160,11 @@ class PartialSumLinear(Linear):
         num_ranks = self.num_ranks
 
         if input_dim % num_ranks != 0:
+            warnings.warn(
+                f"PartialSumLinear: input_dim ({input_dim}) is not divisible by "
+                f"num_ranks ({num_ranks}). Falling back to standard linear.",
+                UserWarning,
+            )
             return linear(input, self.weight, self.bias)
 
         shard_size = input_dim // num_ranks
@@ -375,6 +381,11 @@ class PartialSumMoeExperts(nn.Module):
         num_ranks = self.num_ranks
 
         if input_dim % num_ranks != 0:
+            warnings.warn(
+                f"PartialSumMoeExperts: input_dim ({input_dim}) is not divisible by "
+                f"num_ranks ({num_ranks}). Falling back to standard linear for down_proj.",
+                UserWarning,
+            )
             return nn.functional.linear(input, weight)
 
         shard_size = input_dim // num_ranks
@@ -431,14 +442,22 @@ def _qdq_partial_sums(
 
     global_scale = None
     if quant_args.strategy == QuantizationStrategy.TENSOR_GROUP:
-        min_val = flat_results.min()
-        max_val = flat_results.max()
-        global_scale = generate_gparam(
-            updated_min_val=min_val,
-            updated_max_val=max_val,
-            scale_data=FP8_E4M3_DATA,
-            quant_data=FP4_E2M1_DATA,
-        )
+        if is_fp4(quant_args):
+            min_val = flat_results.min()
+            max_val = flat_results.max()
+            global_scale = generate_gparam(
+                updated_min_val=min_val,
+                updated_max_val=max_val,
+                scale_data=FP8_E4M3_DATA,
+                quant_data=FP4_E2M1_DATA,
+            )
+        else:
+            warnings.warn(
+                f"PartialSumLinear: TENSOR_GROUP with {quant_args.num_bits}-bit "
+                f"{quant_args.type} is not supported for global_scale computation. "
+                f"Only FP4 (NVFP4) is currently supported.",
+                UserWarning,
+            )
 
     scale, zero_point = compute_dynamic_scales_and_zp(
         value=flat_results,
