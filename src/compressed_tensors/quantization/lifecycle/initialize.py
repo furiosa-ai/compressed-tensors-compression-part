@@ -218,10 +218,12 @@ def _initialize_scale_zero_point(
     # 3. Identify quantization scale and zp dtype
     scale_dtype = scale_dtype if scale_dtype is not None else module.weight.dtype
 
-    if is_nvfp4plus(quantization_args=quantization_args):
-        scale_dtype = zp_dtype = torch.bfloat16
-    elif is_fp4(quantization_args=quantization_args):
-        scale_dtype = zp_dtype = FP8_E4M3_DATA.dtype
+    
+    if is_fp4(quantization_args=quantization_args):
+        if is_nvfp4plus(quantization_args=quantization_args):
+            scale_dtype = zp_dtype = torch.bfloat16
+        else:
+            scale_dtype = zp_dtype = FP8_E4M3_DATA.dtype
     else:
         # TODO: consider erroring out in the future as if the dtype if not one of these,
         # there is likely bug
