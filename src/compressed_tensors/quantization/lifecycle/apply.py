@@ -158,25 +158,8 @@ def apply_quantization_config(
         # potentially fix module name to remove FSDP wrapper prefix
         name = fix_fsdp_module_name(name)
         if matches := find_name_or_class_matches(name, submodule, config.ignore):
-            if _is_partial_sum_target(name, partial_sum_cfg):
-                if not isinstance(submodule, torch.nn.Linear):
-                    continue
-                from compressed_tensors.linear.partialsum_linear import PartialSumLinear
-                partial_sum_kwargs = dict(
-                    num_ranks=partial_sum_cfg.num_ranks,
-                    partial_sum_quant_args=partial_sum_cfg.quant_args,
-                    collect_errors=partial_sum_cfg.collect_errors,
-                )
-                new_module = PartialSumLinear.from_linear(
-                    submodule,
-                    quantization_scheme=None,
-                    quantization_format=None,
-                    **partial_sum_kwargs,
-                )
-                replace_module(model, name, new_module)
-            else:
-                for match in matches:
-                    ignored_submodules[match].append(name)
+            for match in matches:
+                ignored_submodules[match].append(name)
             continue
 
         targets = find_name_or_class_matches(name, submodule, target_to_scheme)
@@ -196,6 +179,12 @@ def apply_quantization_config(
                                 partial_sum_quant_args=partial_sum_cfg.quant_args,
                                 collect_errors=partial_sum_cfg.collect_errors,
                             )
+                            
+                            # TODO: hardcoded for o_proj
+                            if find_name_or_class_matches(name, submodule, ["re:.*o_proj.*"]):
+                                scheme=None
+                                format=None
+                            
                             new_module = PartialSumLinear.from_linear(
                                 submodule,
                                 quantization_scheme=scheme,
@@ -227,10 +216,11 @@ def apply_quantization_config(
                             )
                             
                         replace_module(model, name, new_module)
-                        
-            submodule.quantization_scheme = scheme
+            
+            if scheme is not None and format is not None:            
+                submodule.quantization_scheme = scheme
 
-            names_to_scheme[name] = submodule.quantization_scheme
+                names_to_scheme[name] = submodule.quantization_scheme
 
     if config.ignore is not None and ignored_submodules is not None:
         if set(config.ignore) - set(ignored_submodules):
