@@ -31,7 +31,11 @@ from compressed_tensors.quantization.quant_args import (
 )
 from compressed_tensors.quantization.quant_config import QuantizationStatus
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
-from compressed_tensors.quantization.utils import is_fp4, is_kv_cache_quant_scheme
+from compressed_tensors.quantization.utils import (
+    is_fp4,
+    is_nvfp4plus,
+    is_kv_cache_quant_scheme,
+)
 from compressed_tensors.utils import (
     disable_hf_hook,
     get_execution_device,
@@ -214,8 +218,12 @@ def _initialize_scale_zero_point(
     # 3. Identify quantization scale and zp dtype
     scale_dtype = scale_dtype if scale_dtype is not None else module.weight.dtype
 
+    
     if is_fp4(quantization_args=quantization_args):
-        scale_dtype = zp_dtype = FP8_E4M3_DATA.dtype
+        if is_nvfp4plus(quantization_args=quantization_args):
+            scale_dtype = zp_dtype = torch.bfloat16
+        else:
+            scale_dtype = zp_dtype = FP8_E4M3_DATA.dtype
     else:
         # TODO: consider erroring out in the future as if the dtype if not one of these,
         # there is likely bug

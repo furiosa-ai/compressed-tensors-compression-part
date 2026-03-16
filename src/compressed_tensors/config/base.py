@@ -34,6 +34,7 @@ class CompressionFormat(Enum):
     marlin_24 = "marlin-24"
     mixed_precision = "mixed-precision"
     nvfp4_pack_quantized = "nvfp4-pack-quantized"
+    nvfp4plus_quantized = "nvfp4plus-quantized"
 
 
 @unique
