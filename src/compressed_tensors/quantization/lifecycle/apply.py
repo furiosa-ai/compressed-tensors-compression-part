@@ -168,8 +168,15 @@ def apply_quantization_config(
             continue
 
         if targets or is_partial_sum_target:
-            scheme = _scheme_from_targets(target_to_scheme, targets, name) if targets else None
-            format = config.format if targets else None
+            if ignore_matches and is_partial_sum_target:
+                # ignored but partial_sum target (e.g. W16A16 o_proj):
+                # scheme/format are None to keep original weight,
+                # only partial sum QDQ is applied in forward
+                scheme = None
+                format = None
+            else:
+                scheme = _scheme_from_targets(target_to_scheme, targets, name)
+                format = config.format
 
             if run_compressed:
                 if format is not None and format == CompressionFormat.dense.value:
