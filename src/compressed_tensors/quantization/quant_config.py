@@ -16,7 +16,11 @@ from enum import Enum
 from typing import Annotated, Any, Dict, List, Optional, Union
 
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs
+from compressed_tensors.quantization.quant_args import (
+    DynamicType,
+    QuantizationArgs,
+    QuantizationStrategy,
+)
 from compressed_tensors.quantization.quant_scheme import (
     QuantizationScheme,
     preset_name_to_scheme,
@@ -33,6 +37,7 @@ from torch.nn import Module
 __all__ = [
     "QuantizationStatus",
     "QuantizationConfig",
+    "PartialSumConfig",
     "LIFECYCLE_ORDER",
     "DEFAULT_QUANTIZATION_METHOD",
     "DEFAULT_QUANTIZATION_FORMAT",
@@ -105,6 +110,44 @@ DEFAULT_QUANTIZATION_METHOD = "compressed-tensors"
 DEFAULT_QUANTIZATION_FORMAT = "fakequant"
 
 
+class PartialSumConfig(BaseModel):
+    """
+    Configuration for partial sum QDQ (tensor parallelism simulation).
+
+    When present in QuantizationConfig, target modules' forward passes are
+    modified to split matmul into num_ranks partial sums, then apply QDQ
+    to each partial result before accumulation.
+
+    :param num_ranks: number of simulated tensor-parallel ranks
+    :param quant_args: quantization parameters for partial sum QDQ.
+        If None, defaults to dynamic FP8_E4M3 GROUP quantization (group_size=128).
+    :param targets: layer name patterns to apply partial sum to.
+        Supports exact names and 're:' prefixed regex patterns.
+        If None, applies to all quantized Linear layers.
+    :param ignore: layer name patterns to exclude from partial sum
+    :param collect_errors: whether to collect per-layer QDQ error metrics
+    """
+
+    num_ranks: int = 4
+    quant_args: Optional[QuantizationArgs] = None
+    targets: Optional[List[str]] = None
+    ignore: Optional[List[str]] = Field(default_factory=list)
+    collect_errors: bool = False
+
+    model_config = ConfigDict(extra="ignore")
+
+    def model_post_init(self, __context):
+        if self.quant_args is None:
+            self.quant_args = QuantizationArgs(
+                num_bits=8,
+                type="float",
+                symmetric=True,
+                strategy=QuantizationStrategy.GROUP,
+                group_size=32,
+                dynamic=True,
+            )
+
+
 class QuantizationConfig(BaseModel):
     """
     Full configuration specifying how a model is quantized. Each quantized layer is
@@ -133,6 +176,7 @@ class QuantizationConfig(BaseModel):
         compression ratio acheived by the quantization config
     :ignore: optional list of layers to ignore from config_groups. Layers in this list
         are not quantized even if they match up with a target in config_groups
+    :param partial_sum: optional partial sum QDQ config for TP simulation
     """
 
     config_groups: Dict[str, Union[QuantizationScheme, List[str]]]
@@ -142,6 +186,7 @@ class QuantizationConfig(BaseModel):
     quantization_status: QuantizationStatus = QuantizationStatus.INITIALIZED
     global_compression_ratio: Optional[float] = None
     ignore: Optional[List[str]] = Field(default_factory=list)
+    partial_sum: Optional[PartialSumConfig] = None
     # `run_compressed` is a dummy, unused arg for backwards compatibility
     # see: https://github.com/huggingface/transformers/pull/39324
     run_compressed: Annotated[Any, Field(exclude=True)] = None

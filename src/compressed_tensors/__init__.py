@@ -17,6 +17,6 @@ from .base import *
 # flake8: noqa
 from .compressors import *
 from .config import *
-from .quantization import QuantizationConfig, QuantizationStatus
+from .quantization import PartialSumConfig, QuantizationConfig, QuantizationStatus
 from .utils import *
 from .version import *
