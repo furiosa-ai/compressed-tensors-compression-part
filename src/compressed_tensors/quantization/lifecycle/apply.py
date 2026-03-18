@@ -183,8 +183,8 @@ def apply_quantization_config(
                             
                             # TODO: hardcoded for o_proj
                             if find_name_or_class_matches(name, submodule, ["re:.*o_proj.*"]):
-                                scheme=None
-                                format=None
+                                scheme = None
+                                format = None
                             
                             new_module = PartialSumLinear.from_linear(
                                 submodule,
