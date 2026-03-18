@@ -127,11 +127,6 @@ def apply_quantization_config(
     :param run_compressed: Whether the model will be run in compressed mode or
         decompressed fully on load
     """
-    try:
-        from transformers.models.exaone_moe.modeling_exaone_moe import ExaoneMoeExperts
-    except ImportError:
-        ExaoneMoeExperts = None
-        
     # Workaround for when HF Quantizer passes None, see PR #180
     if config is None:
         return dict()
@@ -150,6 +145,13 @@ def apply_quantization_config(
             target_to_scheme[target] = scheme
 
     partial_sum_cfg = config.partial_sum
+    if run_compressed:
+        from compressed_tensors.linear.compressed_linear import CompressedLinear, CompressedMoeExperts
+        from compressed_tensors.linear.partialsum_linear import PartialSumLinear, PartialSumMoeExperts
+        try:
+            from transformers.models.exaone_moe.modeling_exaone_moe import ExaoneMoeExperts
+        except ImportError:
+            ExaoneMoeExperts = None
 
     # list of submodules to ignore
     ignored_submodules = defaultdict(list)
@@ -160,7 +162,7 @@ def apply_quantization_config(
         if matches := find_name_or_class_matches(name, submodule, config.ignore):
             for match in matches:
                 ignored_submodules[match].append(name)
-            continue
+            continue  # layer matches ignore list, continue
 
         targets = find_name_or_class_matches(name, submodule, target_to_scheme)
 
@@ -173,7 +175,6 @@ def apply_quantization_config(
                 if format != CompressionFormat.dense.value:
                     if isinstance(submodule, torch.nn.Linear):
                         if _is_partial_sum_target(name, partial_sum_cfg):
-                            from compressed_tensors.linear.partialsum_linear import PartialSumLinear
                             partial_sum_kwargs = dict(
                                 num_ranks=partial_sum_cfg.num_ranks,
                                 partial_sum_quant_args=partial_sum_cfg.quant_args,
@@ -192,7 +193,6 @@ def apply_quantization_config(
                                 **partial_sum_kwargs,
                             )
                         else:
-                            from compressed_tensors.linear.compressed_linear import CompressedLinear
                             new_module = CompressedLinear.from_linear(
                                 submodule, quantization_scheme=scheme, quantization_format=format,
                             )
@@ -200,7 +200,6 @@ def apply_quantization_config(
                         replace_module(model, name, new_module)
                     elif ExaoneMoeExperts is not None and isinstance(submodule, ExaoneMoeExperts):
                         if _is_partial_sum_target(name, partial_sum_cfg):
-                            from compressed_tensors.linear.partialsum_linear import PartialSumMoeExperts
                             partial_sum_kwargs = dict(
                                 num_ranks=partial_sum_cfg.num_ranks,
                                 partial_sum_quant_args=partial_sum_cfg.quant_args,
@@ -210,7 +209,6 @@ def apply_quantization_config(
                                 submodule, quantization_scheme=scheme, quantization_format=format, **partial_sum_kwargs,
                             )
                         else:
-                            from compressed_tensors.linear.compressed_linear import CompressedMoeExperts
                             new_module = CompressedMoeExperts.from_moe(
                                 submodule, quantization_scheme=scheme, quantization_format=format,
                             )
