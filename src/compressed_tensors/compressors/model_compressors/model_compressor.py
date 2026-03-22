@@ -467,7 +467,7 @@ class ModelCompressor:
             module_device = get_execution_device(module)
             is_meta = module_device.type == "meta"
 
-            exec_device = "meta" if is_meta else "cpu"
+            exec_device = "meta" if is_meta else module_device
             onloading_device = "meta" if is_meta else module_device
 
             # in the future, support compression on same device
