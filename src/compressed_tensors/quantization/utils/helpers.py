@@ -193,6 +193,19 @@ def compute_dynamic_scales_and_zp(
         min_val = torch.amin(value, dim=reduce_dims, keepdims=keep_dims)
         max_val = torch.amax(value, dim=reduce_dims, keepdims=keep_dims)
 
+    # For TENSOR_GROUP with no static global_scale (dynamic=True, no calibration),
+    # compute global_scale dynamically from the current input's distribution.
+    if (
+        args.strategy == QuantizationStrategy.TENSOR_GROUP
+        and global_scale is None
+    ):
+        quant_data = FP8_E4M3_DATA if args.num_bits == 8 else FP4_E2M1_DATA
+        global_scale = generate_gparam(
+            min_val.amin().reshape(1),
+            max_val.amax().reshape(1),
+            quant_data=quant_data,
+        )
+
     return calculate_qparams(min_val, max_val, args, global_scale=global_scale)
 
 
@@ -320,7 +333,10 @@ def generate_gparam(
 
     E.g. for NVFP4, group (local) scales are in dtype FP8. The global_scale
     attempts to use the entire FP8 dtype range while mapping a per-group max
-    to the FP4 max.
+    to the FP4 max (quant_data=FP4_E2M1_DATA, max=6.0).
+
+    For NVFP8, pass quant_data=FP8_E4M3_DATA (max=448) so the formula
+    becomes scale_data.max * FP8_max / max_val_pos.
     """
     min_vals = torch.min(updated_min_val, torch.zeros_like(updated_min_val))
     max_vals = torch.max(updated_max_val, torch.zeros_like(updated_max_val))

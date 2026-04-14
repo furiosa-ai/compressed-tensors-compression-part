@@ -115,8 +115,9 @@ class DynamicType(str, Enum):
     1. If dynamic is True, all quantization parameters are generated on the fly.
     2. If dynamic is False, all quantization parameters generated are static.
     3. If "local" is provided, only local quantization parameters are dynamic.
+       The global scale is calibrated once from data (used by NVFP4/NVFP8).
 
-    Note: "local" is only currently supported for NVFP4.
+    Note: "local" is only supported for strategy tensor_group.
 
     """
 

@@ -13,4 +13,5 @@ from .mxfp4 import *
 from .mxfp8 import *
 from .naive_quantized import *
 from .nvfp4 import *
+from .nvfp8 import *
 from .pack_quantized import *
