@@ -28,30 +28,31 @@ def to_accelerate(model: torch.nn.Module) -> dict[str, str]:
     :param model: model dispatched with `compressed_tensors` offloading
     :return: accelerate-style device map
 
-    Note: if a module was never offloaded via `compressed_tensors` (its
-    `_parameters` is not an `OffloadCache`), we must not clobber its entry
-    in the pre-existing `hf_device_map` — doing so sets every module's
-    device to "cpu" and triggers the offloaded-save path in
-    `transformers.PreTrainedModel.save_pretrained`, which in turn hits a
-    VLM key-remap bug (module_map uses pre-remap keys, state_dict uses
-    post-remap keys → KeyError during shard save). For models already
-    dispatched by HF `accelerate` / `device_map="auto"`, preserve the
-    existing map entry so save_pretrained takes the normal path.
+    Note: if NO module in the model actually has an `OffloadCache` (i.e. the
+    model was loaded via HF `accelerate` / `device_map="auto"` rather than
+    via `compressed_tensors` offloading), this function leaves the existing
+    `hf_device_map` untouched. The previous behaviour — stamping every
+    named submodule with `str(DEFAULT_OFFLOAD_DEVICE)` ("cpu") — tricked
+    `transformers.PreTrainedModel.save_pretrained` into the offloaded-save
+    path, which then triggered a VLM key-remap bug (module_map uses
+    pre-remap keys while state_dict uses post-remap keys → KeyError during
+    shard save, e.g. "visual.patch_embed.proj.weight" on Qwen2.5-VL).
     """
-    existing_map = dict(getattr(model, "hf_device_map", {}) or {})
+    # Fast path: model is not compressed_tensors-offloaded at all. Just return
+    # the existing hf_device_map unchanged.
+    has_any_offload_cache = any(
+        isinstance(getattr(m, "_parameters", None), OffloadCache)
+        for m in model.modules()
+    )
+    if not has_any_offload_cache:
+        return dict(getattr(model, "hf_device_map", {}) or {})
+
     hf_device_map = {}
     hf_disk_index = _to_accelerate_disk_index(model, DiskCache.index)
 
     for name, module in model.named_modules():
-        had_offload_cache = isinstance(
-            getattr(module, "_parameters", None), OffloadCache
-        )
         offload_device_str = to_accelerate_module(module, name, hf_disk_index)
-        if had_offload_cache or name not in existing_map:
-            hf_device_map[name] = offload_device_str
-        else:
-            # preserve existing (e.g. HF accelerate) placement for this module
-            hf_device_map[name] = existing_map[name]
+        hf_device_map[name] = offload_device_str
 
     setattr(model, "hf_device_map", hf_device_map)
     return hf_device_map
