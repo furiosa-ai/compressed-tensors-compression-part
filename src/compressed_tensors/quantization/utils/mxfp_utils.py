@@ -34,10 +34,12 @@ _MX_ELEM_OFFSET = {
 
 
 def should_generate_mx_scales(args: QuantizationArgs):
+    # Standard MX spec uses group_size=32; MXFP8_g16 research variant reuses the
+    # MX scale encoding (uint8 E8M0) with the NVFP8 block size of 16.
     return (
         args.num_bits in (4, 8)
         and args.type == QuantizationType.FLOAT.value
-        and args.group_size == 32
+        and args.group_size in (16, 32)
         and args.scale_dtype == torch.uint8
     )
 

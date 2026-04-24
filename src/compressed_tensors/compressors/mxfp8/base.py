@@ -90,12 +90,14 @@ class MXFP8QuantizationCompressor(NaiveQuantizationCompressor):
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
-        """MXFP8 matches FP8 with group_size=32 and uint8 scale_dtype."""
+        """MXFP8 matches FP8 with uint8 scale_dtype. Standard MX spec uses
+        group_size=32; the MXFP8_g16 research variant reuses this format with
+        the NVFP8 block size of 16."""
         return (
             module_type == torch.nn.Linear
             and scheme.weights is not None
             and scheme.weights.num_bits == 8
             and scheme.weights.type == QuantizationType.FLOAT.value
-            and scheme.weights.group_size == 32
+            and scheme.weights.group_size in (16, 32)
             and scheme.weights.scale_dtype == torch.uint8
         )
