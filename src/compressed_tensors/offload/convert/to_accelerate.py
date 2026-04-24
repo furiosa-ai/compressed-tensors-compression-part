@@ -27,13 +27,31 @@ def to_accelerate(model: torch.nn.Module) -> dict[str, str]:
 
     :param model: model dispatched with `compressed_tensors` offloading
     :return: accelerate-style device map
+
+    Note: if a module was never offloaded via `compressed_tensors` (its
+    `_parameters` is not an `OffloadCache`), we must not clobber its entry
+    in the pre-existing `hf_device_map` — doing so sets every module's
+    device to "cpu" and triggers the offloaded-save path in
+    `transformers.PreTrainedModel.save_pretrained`, which in turn hits a
+    VLM key-remap bug (module_map uses pre-remap keys, state_dict uses
+    post-remap keys → KeyError during shard save). For models already
+    dispatched by HF `accelerate` / `device_map="auto"`, preserve the
+    existing map entry so save_pretrained takes the normal path.
     """
+    existing_map = dict(getattr(model, "hf_device_map", {}) or {})
     hf_device_map = {}
     hf_disk_index = _to_accelerate_disk_index(model, DiskCache.index)
 
     for name, module in model.named_modules():
+        had_offload_cache = isinstance(
+            getattr(module, "_parameters", None), OffloadCache
+        )
         offload_device_str = to_accelerate_module(module, name, hf_disk_index)
-        hf_device_map[name] = offload_device_str
+        if had_offload_cache or name not in existing_map:
+            hf_device_map[name] = offload_device_str
+        else:
+            # preserve existing (e.g. HF accelerate) placement for this module
+            hf_device_map[name] = existing_map[name]
 
     setattr(model, "hf_device_map", hf_device_map)
     return hf_device_map
