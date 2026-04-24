@@ -51,8 +51,19 @@ def to_accelerate(model: torch.nn.Module) -> dict[str, str]:
     hf_disk_index = _to_accelerate_disk_index(model, DiskCache.index)
 
     for name, module in model.named_modules():
+        # Only modules that actually had an OffloadCache carry meaningful
+        # device information; for everything else (container modules without
+        # their own parameters), skip the entry rather than writing the
+        # DEFAULT_OFFLOAD_DEVICE ("cpu") sentinel. That sentinel would
+        # otherwise propagate into hf_device_map and trip the offloaded-save
+        # path in transformers.PreTrainedModel.save_pretrained even when all
+        # real parameters are on GPU.
+        had_offload_cache = isinstance(
+            getattr(module, "_parameters", None), OffloadCache
+        )
         offload_device_str = to_accelerate_module(module, name, hf_disk_index)
-        hf_device_map[name] = offload_device_str
+        if had_offload_cache:
+            hf_device_map[name] = offload_device_str
 
     setattr(model, "hf_device_map", hf_device_map)
     return hf_device_map
