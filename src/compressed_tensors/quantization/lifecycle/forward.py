@@ -398,8 +398,24 @@ def set_forward_quantized(module: torch.nn.Linear | torch.nn.Embedding):
         if enabled and scheme.weights and status < QuantizationStatus.COMPRESSED:
             weight_data = forward_quantize(self, weight_data, "weight", scheme.weights)
 
+        # Ensure dtype consistency before the matmul. After decompress, an
+        # NVFP8 weight ends up as float32 (because dequantize defaults to
+        # scale.dtype = float32 in the NVFP8 path) while inputs stay as
+        # bf16/fp16 — that mismatch raises "self and mat2 must have the same
+        # dtype". Cast weight (and bias) to the input dtype so the matmul
+        # always works without forcing every caller to monkey-patch.
+        if weight_data.dtype != input.dtype:
+            weight_data = weight_data.to(input.dtype)
+        bias = getattr(self, "bias", None)
+        bias_orig_dtype = bias.dtype if (bias is not None and bias.dtype != input.dtype) else None
+        if bias_orig_dtype is not None:
+            self.bias.data = bias.data.to(input.dtype)
+
         with patch_attr(weight, "data", weight_data):
             output = self.__class__.forward(self, input)
+
+        if bias_orig_dtype is not None:
+            self.bias.data = self.bias.data.to(bias_orig_dtype)
 
         if enabled and scheme.output_activations:
             output = forward_quantize(self, output, "output", scheme.output_activations)
