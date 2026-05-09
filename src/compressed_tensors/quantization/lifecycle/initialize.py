@@ -113,6 +113,23 @@ def initialize_module_for_quantization(
             with unwrap_offload_forward(module):
                 set_forward_quantized(module)
 
+        # SmoothQuant non-fused (o_proj / down_proj): pre-register a buffer
+        # slot of correct shape so HF's state_dict loader can populate it on
+        # `from_pretrained`. PyTorch's _load_from_state_dict does NOT load
+        # tensors into None buffer slots, so we use an all-ones placeholder
+        # (mathematical no-op: x / 1 == x) of shape (in_features,).
+        # SmoothQuantModifier overwrites this with calibrated values.
+        # Always create on CPU: at HF load time `weight` is on meta device,
+        # so device=weight.device would produce a meta-typed buffer that
+        # never materializes. CPU placeholders are moved by `module.to(...)`.
+        if not hasattr(module, "smooth_scale"):
+            in_features = weight.shape[-1]
+            module.register_buffer(
+                "smooth_scale",
+                torch.ones(in_features, dtype=weight.dtype),
+                persistent=True,
+            )
+
     else:
         raise ValueError(f"Quantization of module type {type(module)} is not supported")
 

@@ -392,6 +392,14 @@ def set_forward_quantized(module: torch.nn.Linear | torch.nn.Embedding):
         weight = self.weight  # onload once
         weight_data = weight.data
 
+        # SmoothQuant non-fused (o_proj / down_proj): pre-divide activation by
+        # the per-input-channel migration scale stashed by SmoothQuantModifier.
+        # Weight was already pre-multiplied at apply time, so we only do the
+        # input divisor here. No-op when smooth_scale is absent or None.
+        smooth_scale = getattr(self, "smooth_scale", None)
+        if smooth_scale is not None:
+            input = input / smooth_scale.to(dtype=input.dtype, device=input.device)
+
         if enabled and scheme.input_activations:
             input = forward_quantize(self, input, "input", scheme.input_activations)
 
