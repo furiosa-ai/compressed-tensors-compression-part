@@ -38,6 +38,7 @@ __all__ = [
     "strategy_cdiv",
     "calculate_block_padding",
     "maybe_pad_tensor_for_block_quant",
+    "scale_search_offset",
 ]
 
 # target the self_attn layer
@@ -137,6 +138,75 @@ def calculate_qparams(
     return scales, zero_points
 
 
+@torch.no_grad()
+def scale_search_offset(
+    x_blocks: Tensor,
+    scale: Tensor,
+    args: QuantizationArgs,
+    global_scale: Tensor | None = None,
+) -> Tensor:
+    """ScaleSearch (SYB): replace each per-block scale with the E4M3-representable
+    neighbor that minimizes the block quant MSE.
+
+    The neighbor is obtained by adding an integer offset f to the int8 bit-pattern of
+    the standard (already E4M3-rounded) block scale, scanning f in
+    [args.scale_search_fmin, args.scale_search_fmax]. The effective QDQ scale is
+    ``scale / global_scale`` (matching the forward path), so the MSE is forward-exact.
+    Element quantization uses ``args`` so this works for both NVFP8 (E4M3 element) and
+    NVFP4 (E2M1 element); the block scale itself is E4M3 in both.
+
+    :param x_blocks: grouped tensor of shape ``(*scale.shape, group_size)``
+    :param scale: standard per-block scale (E4M3), shape ``(*qparam_shape,)``
+    :param args: quantization args carrying scale_search_fmin/fmax and element type
+    :param global_scale: optional per-tensor global scale (FP4/FP8 two-level scheme)
+    :return: searched scale, same shape/dtype as ``scale``
+    """
+    from compressed_tensors.quantization.quant_args import (
+        round_to_quantized_type_args,
+    )
+
+    if x_blocks.shape[:-1] != scale.shape:
+        raise ValueError(
+            f"scale_search_offset expects x_blocks {tuple(x_blocks.shape)} to be "
+            f"scale {tuple(scale.shape)} + (group_size,)"
+        )
+    f_min = int(getattr(args, "scale_search_fmin", -2))
+    f_max = int(getattr(args, "scale_search_fmax", 8))
+    e4m3 = FP8_E4M3_DATA.dtype  # block scale dtype (both NVFP4 and NVFP8)
+    work_dtype = x_blocks.dtype if x_blocks.is_floating_point() else torch.float32
+    x = x_blocks.to(work_dtype)
+    q_min, q_max = calculate_range(args, x.device)  # element range: FP4 +/-6, FP8 +/-448
+    gs = (
+        global_scale.to(work_dtype).flatten()[0]
+        if global_scale is not None
+        else torch.ones((), dtype=work_dtype, device=x.device)
+    )
+
+    def block_mse(scale_stored: Tensor) -> Tensor:
+        eff = (scale_stored / gs).unsqueeze(-1)
+        q = round_to_quantized_type_args(x / eff, args, q_min, q_max) * eff
+        return ((q - x) ** 2).mean(dim=-1, keepdim=True)
+
+    s0 = scale.to(e4m3)  # standard scale is already E4M3-rounded
+    bits0 = s0.view(torch.uint8).to(torch.int16).unsqueeze(-1)  # (*qparam, 1)
+    best_mse = block_mse(scale.to(work_dtype))
+    best_bits = bits0.clone()
+    for f in range(f_min, f_max + 1):
+        if f == 0:
+            continue
+        # valid positive E4M3 bit-patterns are [1, 126]; 0 -> div0, 127 -> NaN
+        bits = (bits0 + f).clamp(1, 126)
+        cand = bits.squeeze(-1).to(torch.uint8).contiguous().view(e4m3).to(work_dtype)
+        mse = block_mse(cand)
+        take = mse < best_mse
+        best_mse = torch.where(take, mse, best_mse)
+        best_bits = torch.where(take, bits, best_bits)
+    new_scale = (
+        best_bits.squeeze(-1).clamp(1, 126).to(torch.uint8).contiguous().view(e4m3)
+    )
+    return new_scale.to(scale.dtype)
+
+
 def compute_dynamic_scales_and_zp(
     value: Tensor,
     args: QuantizationArgs,
@@ -206,7 +276,17 @@ def compute_dynamic_scales_and_zp(
             quant_data=quant_data,
         )
 
-    return calculate_qparams(min_val, max_val, args, global_scale=global_scale)
+    scales, zero_points = calculate_qparams(
+        min_val, max_val, args, global_scale=global_scale
+    )
+    # ScaleSearch (SYB) on dynamic activation scales: `value` is already grouped as
+    # (*scales.shape, group_size) for GROUP / TENSOR_GROUP above.
+    if getattr(args, "scale_search", False) and args.strategy in (
+        QuantizationStrategy.GROUP,
+        QuantizationStrategy.TENSOR_GROUP,
+    ):
+        scales = scale_search_offset(value, scales, args, global_scale=global_scale)
+    return scales, zero_points
 
 
 def calculate_range(

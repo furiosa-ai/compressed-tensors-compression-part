@@ -194,6 +194,21 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             "Observers constructor excluding quantization range or symmetry"
         ),
     )
+    # ScaleSearch / SYB: after the standard block scale is computed, replace it with
+    # the E4M3-representable neighbor (int8 bit-pattern +/- offset) that minimizes the
+    # per-block quant MSE. Applies to GROUP / TENSOR_GROUP (FP8/FP4) for both weights
+    # (offline, via the observer) and dynamic activations. The search *range* is a
+    # config (not searched): defaults from empirical f* histograms (+skewed, ~0 neg).
+    scale_search: bool = Field(
+        default=False,
+        description="enable ScaleSearch (SYB) per-block scale offset search by min MSE",
+    )
+    scale_search_fmin: int = Field(
+        default=-2, description="min int8 bit-pattern offset searched (inclusive)"
+    )
+    scale_search_fmax: int = Field(
+        default=8, description="max int8 bit-pattern offset searched (inclusive)"
+    )
 
     @field_serializer("zp_dtype")
     def serialize_dtype(self, dtype: torch.dtype):
