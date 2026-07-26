@@ -126,6 +126,21 @@ class TransformFactory(RegistryMixin, ABC):
             assert hasattr(module, "weight")
             with torch.no_grad(), align_module_device(module):
                 update_offload_parameter(module, "weight", transform(module.weight))
+                # WEIGHT_OUTPUT pairs with an online inverse on the OUTPUT. The
+                # module's bias lives in output space, so it must be fused with
+                # the same rotation (b <- U^T b, treated as an (out, 1) column
+                # through the same WEIGHT_OUTPUT application); otherwise the
+                # online inverse yields y + U^-1 b != y + b. Upstream models
+                # (llama-family) have bias-free linears, which hid this.
+                if (
+                    args.location == TransformLocation.WEIGHT_OUTPUT
+                    and getattr(module, "bias", None) is not None
+                ):
+                    update_offload_parameter(
+                        module,
+                        "bias",
+                        transform(module.bias.unsqueeze(-1)).squeeze(-1),
+                    )
 
             if self.scheme.requires_grad:
                 # for training, the weight changes with every forward pass
